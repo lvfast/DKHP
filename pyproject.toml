@@ -1,0 +1,44 @@
+[project]
+name = "course-registration-service"
+version = "0.1.0"
+description = "Course registration automation service"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+recommended = [
+  "httpx>=0.27",
+  "beautifulsoup4>=4.12",
+  "pydantic>=2.7",
+  "pydantic-settings>=2.2",
+  "PyYAML>=6.0",
+  "tenacity>=8.3",
+  "APScheduler>=3.10",
+  "sqlmodel>=0.0.18",
+  "alembic>=1.13",
+  "python-dotenv>=1.0",
+  "structlog>=24.1",
+  "rich>=13.7",
+  "prometheus-client>=0.20",
+  "sentry-sdk>=2.0",
+  "python-telegram-bot>=21.0",
+]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.4",
+  "mypy>=1.10",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+

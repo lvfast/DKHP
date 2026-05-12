@@ -1,0 +1,44 @@
+portal:
+  login_url: "https://portal.ctdb.hcmus.edu.vn/Login?returnurl=%2f"
+  registration_url: "https://portal.ctdb.hcmus.edu.vn/dang-ky-hoc-phan/sinh-vien-clc"
+  expected_registration_page_text: "Sinh vien CLC"
+  login_username_field: 'dnn$ctr$Login$Login_DNN$txtUsername'
+  login_password_field: 'dnn$ctr$Login$Login_DNN$txtPassword'
+  login_event_target: 'dnn$ctr$Login$Login_DNN$cmdLogin'
+  login_multipart: true
+  registration_action: "addMonDangKy"
+  registration_course_field: "data"
+  registration_multipart: true
+
+student:
+  username_env: "PORTAL_USERNAME"
+  password_env: "PORTAL_PASSWORD"
+
+runtime:
+  mode: "auto"
+  dry_run: true
+  relogin_after_seconds: 600
+  request_timeout_seconds: 15
+  normal_interval_seconds: 30
+  hot_interval_seconds: 3
+  max_requests_per_minute: 20
+  stop_when_all_success: true
+  max_failures_before_notify: 5
+
+courses:
+  - id: "6101"
+    name: "Course 1"
+    priority: 1
+    enabled: true
+  - id: "6102"
+    name: "Course 2"
+    priority: 2
+    enabled: true
+
+notification:
+  telegram_enabled: false
+  telegram_bot_token_env: "TELEGRAM_BOT_TOKEN"
+  telegram_chat_id_env: "TELEGRAM_CHAT_ID"
+
+database:
+  url: "sqlite:///data/app.db"
