@@ -31,6 +31,13 @@ Copy-Item .env.example .env
 Edit `config.yaml` with class ids and portal field names if they differ from
 the defaults. Edit `.env` with `PORTAL_USERNAME` and `PORTAL_PASSWORD`.
 
+The current portal may send an access code to the student's email after the
+username/password step. When that happens, the CLI prompts
+`Nhap ma xac thuc email:` and submits the code in the same cookie session.
+The code is entered with hidden terminal input and is never saved to config,
+SQLite, or logs. Restarting the process or losing the session may require a
+new access code.
+
 For the current DNN portal flow, the login settings normally look like:
 
 ```yaml
@@ -56,6 +63,11 @@ python -m app.main run
 python -m app.main healthcheck
 python -m app.main test-notification
 ```
+
+Use an interactive terminal for `dry-run`, `run-once`, and `run`, because an
+email access-code prompt can appear. Keep `runtime.dry_run: true` for the first
+access-code test. Only switch it to `false` after the CLI reaches the
+registration page successfully.
 
 ## Docker
 

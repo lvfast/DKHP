@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from html.parser import HTMLParser
 import json
 import re
@@ -25,12 +26,65 @@ class _InputParser(HTMLParser):
             self.inputs[name] = attr_map.get("value", "")
 
 
+@dataclass(frozen=True)
+class AccessCodeForm:
+    action: str
+    fields: dict[str, str]
+    otp_field: str
+    submit_field: str
+
+
+class _AccessCodeFormParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.action = ""
+        self.fields: dict[str, str] = {}
+        self.otp_field = ""
+        self.submit_field = ""
+        self._in_form = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = {key.lower(): value or "" for key, value in attrs}
+        if tag.lower() == "form" and not self._in_form:
+            self._in_form = True
+            self.action = attr_map.get("action", "")
+            return
+        if tag.lower() != "input" or not self._in_form:
+            return
+        name = attr_map.get("name", "")
+        if not name:
+            return
+        self.fields[name] = attr_map.get("value", "")
+        lowered = name.lower()
+        if lowered.endswith("$txtotp"):
+            self.otp_field = name
+        elif lowered.endswith("$btnverify"):
+            self.submit_field = name
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "form" and self._in_form:
+            self._in_form = False
+
+
 def parse_login_form(html: str) -> dict[str, str]:
     parser = _InputParser()
     parser.feed(html)
     if not parser.inputs:
         raise ParseError("Login form does not contain named inputs")
     return parser.inputs
+
+
+def parse_access_code_form(html: str) -> AccessCodeForm:
+    parser = _AccessCodeFormParser()
+    parser.feed(html)
+    if not parser.action or not parser.otp_field or not parser.submit_field:
+        raise ParseError("Access-code verification form is incomplete")
+    return AccessCodeForm(
+        action=parser.action,
+        fields=parser.fields,
+        otp_field=parser.otp_field,
+        submit_field=parser.submit_field,
+    )
 
 
 def parse_registration_response(status_code: int, body: str) -> RegistrationResult:

@@ -5,21 +5,33 @@ from http.cookiejar import CookieJar
 import logging
 import secrets
 from time import monotonic
-from typing import Any
+from typing import Any, Callable
 from urllib import parse, request
+from urllib.parse import urljoin
 
 from app.config import Settings
+from app.domain.errors import ParseError
 from app.domain.models import LoginResult, RegistrationResult
 from app.domain.statuses import RegistrationStatus
 from app.logging_config import event_extra
-from app.portal.parser import parse_login_form, parse_registration_response
+from app.portal.parser import (
+    parse_access_code_form,
+    parse_login_form,
+    parse_registration_response,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class PortalClient:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        access_code_provider: Callable[[], str] | None = None,
+    ) -> None:
         self.settings = settings
+        self._access_code_provider = access_code_provider
         self._cookies = CookieJar()
         self._opener = request.build_opener(request.HTTPCookieProcessor(self._cookies))
         self._logged_in_at = 0.0
@@ -28,7 +40,7 @@ class PortalClient:
         return await asyncio.to_thread(self._login_sync)
 
     async def ensure_logged_in(self) -> None:
-        if monotonic() - self._logged_in_at < self.settings.runtime.relogin_after_seconds:
+        if self._logged_in_at > 0:
             return
         result = await self.login()
         if not result.success:
@@ -43,9 +55,13 @@ class PortalClient:
     async def close(self) -> None:
         return None
 
+    def invalidate_session(self) -> None:
+        self._logged_in_at = 0.0
+        self._cookies.clear()
+
     def _login_sync(self) -> LoginResult:
         try:
-            get_status, html = self._request("GET", self.settings.portal.login_url)
+            get_status, html, _ = self._request("GET", self.settings.portal.login_url)
             hidden = parse_login_form(html)
             payload = {
                 **hidden,
@@ -54,7 +70,7 @@ class PortalClient:
             }
             if self.settings.portal.login_event_target:
                 payload["__EVENTTARGET"] = self.settings.portal.login_event_target
-            post_status, post_body = self._request(
+            post_status, post_body, _ = self._request(
                 "POST",
                 self.settings.portal.login_url,
                 data=payload,
@@ -74,6 +90,73 @@ class PortalClient:
                 message=f"Login returned HTTP {post_status}",
                 http_status=post_status,
             )
+        try:
+            access_code_form = parse_access_code_form(post_body)
+        except ParseError:
+            access_code_form = None
+
+        if access_code_form is not None:
+            if self._access_code_provider is None:
+                return LoginResult(
+                    success=False,
+                    message="Portal requires an email verification code",
+                    http_status=post_status,
+                )
+            access_code = self._access_code_provider().strip()
+            if not access_code:
+                return LoginResult(
+                    success=False,
+                    message="Email verification code cannot be empty",
+                    http_status=post_status,
+                )
+            verification_payload = dict(access_code_form.fields)
+            verification_payload[access_code_form.otp_field] = access_code
+            verification_url = urljoin(
+                self.settings.portal.login_url,
+                access_code_form.action,
+            )
+            verification_status, verification_body, verification_final_url = self._request(
+                "POST",
+                verification_url,
+                data=verification_payload,
+                headers={
+                    "Referer": verification_url,
+                    "Origin": _origin_from_url(verification_url),
+                },
+            )
+            if _is_authentication_url(verification_final_url):
+                return LoginResult(
+                    success=False,
+                    message="Portal verification did not complete",
+                    http_status=verification_status,
+                )
+            try:
+                parse_access_code_form(verification_body)
+            except ParseError:
+                pass
+            else:
+                return LoginResult(
+                    success=False,
+                    message="Email verification code is invalid or expired",
+                    http_status=verification_status,
+                )
+            expected = self.settings.portal.expected_registration_page_text
+            if verification_status >= 400 or (expected and expected not in verification_body):
+                return LoginResult(
+                    success=False,
+                    message="Portal verification did not reach the registration page",
+                    http_status=verification_status,
+                )
+            self._logged_in_at = monotonic()
+            logger.info(
+                "portal_login_success",
+                extra=event_extra(http_status=verification_status),
+            )
+            return LoginResult(
+                success=True,
+                message="login and email verification ok",
+                http_status=verification_status,
+            )
         if self._has_auth_cookie():
             self._logged_in_at = monotonic()
             logger.info("portal_login_success", extra=event_extra(http_status=post_status))
@@ -90,12 +173,15 @@ class PortalClient:
         return LoginResult(success=True, message="login ok", http_status=get_status)
 
     def _check_registration_page_sync(self) -> bool:
-        status, body = self._request("GET", self.settings.portal.registration_url)
+        status, body, final_url = self._request("GET", self.settings.portal.registration_url)
         if status >= 400:
             logger.warning(
                 "registration_page_unavailable",
                 extra=event_extra(http_status=status),
             )
+            return False
+        if _is_authentication_url(final_url):
+            logger.warning("registration_page_requires_verification")
             return False
         expected = self.settings.portal.expected_registration_page_text
         if expected and expected not in body:
@@ -110,7 +196,7 @@ class PortalClient:
         }
         started = monotonic()
         try:
-            status, body = self._request(
+            status, body, final_url = self._request(
                 "POST",
                 self.settings.portal.registration_url,
                 data=payload,
@@ -132,6 +218,13 @@ class PortalClient:
                 message=str(exc),
                 duration_ms=int((monotonic() - started) * 1000),
             )
+        if _is_authentication_url(final_url):
+            return RegistrationResult(
+                status=RegistrationStatus.NEED_RELOGIN,
+                message="Portal redirected to authentication",
+                http_status=status,
+                duration_ms=int((monotonic() - started) * 1000),
+            )
         result = parse_registration_response(status, body)
         return RegistrationResult(
             status=result.status,
@@ -149,7 +242,7 @@ class PortalClient:
         data: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         multipart: bool = False,
-    ) -> tuple[int, str]:
+    ) -> tuple[int, str, str]:
         request_headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -173,7 +266,7 @@ class PortalClient:
         with self._opener.open(req, timeout=self.settings.runtime.request_timeout_seconds) as resp:
             charset = resp.headers.get_content_charset() or "utf-8"
             response_body = resp.read().decode(charset, errors="replace")
-            return resp.status, response_body
+            return resp.status, response_body, resp.geturl()
 
     def _has_auth_cookie(self) -> bool:
         return any(
@@ -185,6 +278,11 @@ class PortalClient:
 def _origin_from_url(url: str) -> str:
     parsed = parse.urlparse(url)
     return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _is_authentication_url(url: str) -> bool:
+    path = parse.urlparse(url).path.lower()
+    return path.endswith("/login") or "verify-access-code" in path
 
 
 def _encode_multipart_form(data: dict[str, Any]) -> tuple[bytes, str]:

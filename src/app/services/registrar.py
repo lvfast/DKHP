@@ -78,6 +78,8 @@ class Registrar:
                     response_excerpt=result.response_excerpt,
                 ),
             )
+            if result.status == RegistrationStatus.NEED_RELOGIN:
+                self.portal.invalidate_session()
             await self._notify_if_needed(course.name, course.id, result, attempt_count)
 
         return self.store.all_success()

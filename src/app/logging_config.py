@@ -66,6 +66,9 @@ def _human_message(event: str, data: dict[str, Any]) -> str:
     if event == "registration_page_text_missing":
         return "Da mo trang dang ky nhung khong tim thay doan text kiem tra trong config."
 
+    if event == "registration_page_requires_verification":
+        return "Portal yeu cau xac thuc email truoc khi vao trang dang ky."
+
     if event == "dry_run_register_course":
         return (
             "Dry-run: se dang ky mon "

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from getpass import getpass
 import sys
 
 from app.config import build_settings, load_settings
@@ -83,7 +84,10 @@ async def _run_once(settings, *, dry_run: bool | None = None) -> int:
 
 def _build_registrar(settings) -> Registrar:
     store = StateStore(settings)
-    portal = PortalClient(settings)
+    portal = PortalClient(
+        settings,
+        access_code_provider=lambda: getpass("Nhap ma xac thuc email: "),
+    )
     notifier = build_notifier(settings.notification)
     limiter = RateLimiter(settings.runtime.max_requests_per_minute)
     return Registrar(settings, portal, store, notifier, limiter)
